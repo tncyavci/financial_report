@@ -1,0 +1,39 @@
+# Core dependencies
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# PDF Processing
+PyPDF2>=3.0.0
+pdfplumber>=0.9.0
+pymupdf>=1.23.0
+
+# Excel Processing
+openpyxl>=3.1.0
+xlrd>=2.0.0
+
+# NLP and Embeddings
+sentence-transformers>=2.2.0
+transformers>=4.30.0
+torch>=2.0.0
+
+# Vector Database
+chromadb>=0.4.15
+
+# GGUF Model Support
+llama-cpp-python>=0.2.0
+
+# Text Processing
+langdetect>=1.0.9
+nltk>=3.8.0
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.65.0
+requests>=2.31.0
+
+# Colab & Ngrok
+pyngrok>=6.0.0
+
+# Development
+typing-extensions>=4.7.0 
