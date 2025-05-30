@@ -6,12 +6,13 @@ Excel dosyalarını okuma ve analiz etme için optimize edilmiş
 import logging
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 import openpyxl
 from openpyxl import load_workbook
 import xlrd
 import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +36,20 @@ class ExcelProcessor:
     """
     Excel dosyaları için optimize edilmiş işlemci
     XLS, XLSX, XLSM formatlarını destekler
+    Multiprocessing desteği ile sheet paralel işleme
     """
     
-    def __init__(self):
-        """Excel işlemci başlatıcı"""
-        logger.info("📊 ExcelProcessor başlatıldı")
+    def __init__(self, max_workers: int = None, use_multiprocessing: bool = True):
+        """
+        Excel işlemci başlatıcı
+        
+        Args:
+            max_workers: Paralel işlem için maksimum worker sayısı
+            use_multiprocessing: Multiprocessing kullanılıp kullanılmayacağı
+        """
+        self.max_workers = max_workers or min(4, os.cpu_count())
+        self.use_multiprocessing = use_multiprocessing
+        logger.info(f"📊 ExcelProcessor başlatıldı - {self.max_workers} worker, MP: {use_multiprocessing}")
     
     def process_excel(self, excel_path: str) -> ExcelResult:
         """
@@ -60,7 +70,7 @@ class ExcelProcessor:
             # Excel metadata'sını al
             excel_metadata = self._get_excel_metadata(excel_path, file_extension)
             
-            # Sayfaları işle
+            # Sayfaları işle (paralel veya sıralı)
             sheets = self._process_all_sheets(excel_path, file_extension)
             
             result = ExcelResult(
@@ -118,7 +128,7 @@ class ExcelProcessor:
             return {'file_format': file_extension}
     
     def _process_all_sheets(self, excel_path: str, file_extension: str) -> List[SheetData]:
-        """Tüm sayfaları işle"""
+        """Tüm sayfaları işle (paralel veya sıralı)"""
         sheets = []
         
         try:
@@ -130,18 +140,57 @@ class ExcelProcessor:
                 # openpyxl engine kullan
                 all_sheets = pd.read_excel(excel_path, sheet_name=None, engine='openpyxl')
             
-            for sheet_name, df in all_sheets.items():
-                logger.debug(f"📄 İşleniyor: {sheet_name}")
-                
-                sheet_data = self._process_single_sheet(sheet_name, df)
-                if sheet_data:
-                    sheets.append(sheet_data)
+            sheet_count = len(all_sheets)
+            logger.info(f"📊 {sheet_count} sayfa bulundu")
             
-            logger.info(f"✅ {len(sheets)} sayfa işlendi")
+            # Paralel işleme kararı
+            if sheet_count <= 2 or not self.use_multiprocessing:
+                # Küçük Excel dosyaları için sıralı işleme
+                logger.info("📄 Küçük Excel - sıralı işleme")
+                for sheet_name, df in all_sheets.items():
+                    logger.debug(f"📄 İşleniyor: {sheet_name}")
+                    sheet_data = self._process_single_sheet(sheet_name, df)
+                    if sheet_data:
+                        sheets.append(sheet_data)
+            else:
+                # Büyük Excel dosyaları için paralel işleme
+                logger.info(f"🚀 Paralel işleme başlatılıyor - {self.max_workers} worker")
+                sheets = self._process_sheets_parallel(all_sheets)
+            
+            logger.info(f"✅ {len(sheets)} sayfa başarıyla işlendi")
             
         except Exception as e:
             logger.error(f"❌ Sayfalar işlenemedi: {e}")
             raise
+        
+        return sheets
+    
+    def _process_sheets_parallel(self, all_sheets: Dict[str, pd.DataFrame]) -> List[SheetData]:
+        """Sayfaları paralel olarak işle"""
+        sheets = []
+        
+        # ThreadPoolExecutor kullan (I/O bound operations için daha uygun)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Tüm sayfalar için task'ları başlat
+            future_to_sheet = {
+                executor.submit(self._process_single_sheet, sheet_name, df): sheet_name
+                for sheet_name, df in all_sheets.items()
+            }
+            
+            # Sonuçları topla
+            for future in as_completed(future_to_sheet):
+                sheet_name = future_to_sheet[future]
+                try:
+                    sheet_data = future.result()
+                    if sheet_data:
+                        sheets.append(sheet_data)
+                        logger.debug(f"✅ Sayfa işlendi: {sheet_name}")
+                except Exception as e:
+                    logger.error(f"❌ Sayfa işlenemedi {sheet_name}: {e}")
+        
+        # Sheet ismine göre sırala (orijinal sırayı koru)
+        original_order = list(all_sheets.keys())
+        sheets.sort(key=lambda x: original_order.index(x.sheet_name) if x.sheet_name in original_order else 999)
         
         return sheets
     
@@ -350,13 +399,22 @@ class ExcelProcessor:
         """İşlemci istatistiklerini döndür"""
         return {
             'processor_type': 'ExcelProcessor',
+            'max_workers': self.max_workers,
+            'use_multiprocessing': self.use_multiprocessing,
             'supported_formats': ['.xls', '.xlsx', '.xlsm'],
             'features': [
                 'multi_sheet_processing',
+                'parallel_sheet_processing',
                 'numeric_analysis',
                 'text_extraction',
                 'summary_statistics',
-                'data_cleaning'
+                'data_cleaning',
+                'thread_based_concurrency'
             ],
-            'engines': ['pandas', 'openpyxl', 'xlrd']
+            'engines': ['pandas', 'openpyxl', 'xlrd'],
+            'optimization': {
+                'small_files': 'sequential_processing (≤2 sheets)',
+                'large_files': 'parallel_processing (>2 sheets)',
+                'concurrency_type': 'ThreadPoolExecutor'
+            }
         } 

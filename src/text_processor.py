@@ -444,29 +444,117 @@ class TextProcessor:
             pass
         return 'tr'  # Varsayılan Türkçe
     
-    def _create_embeddings(self, chunks: List[TextChunk]) -> List[TextChunk]:
-        """Chunk'lar için embedding oluştur"""
+    def _create_embeddings(self, chunks: List[TextChunk], batch_size: int = 32) -> List[TextChunk]:
+        """
+        Chunk'lar için embedding oluştur (batch processing ile optimize edilmiş)
+        
+        Args:
+            chunks: İşlenecek chunk'lar
+            batch_size: Batch boyutu (GPU memory'ye göre ayarlanabilir)
+        """
         if not chunks:
             return chunks
         
-        logger.info(f"🧠 {len(chunks)} chunk için embedding oluşturuluyor...")
+        logger.info(f"🧠 {len(chunks)} chunk için embedding oluşturuluyor... (batch_size: {batch_size})")
         
         try:
+            import time
+            start_time = time.time()
+            
             # Metinleri çıkar
             texts = [chunk.content for chunk in chunks]
             
-            # Embedding'leri oluştur
-            embeddings = self.embedding_service.encode(texts)
+            # Büyük chunk setleri için batch processing
+            if len(texts) > batch_size:
+                logger.info(f"📦 Büyük chunk seti - batch processing kullanılıyor")
+                
+                all_embeddings = []
+                for i in range(0, len(texts), batch_size):
+                    batch_texts = texts[i:i + batch_size]
+                    batch_embeddings = self.embedding_service.encode(
+                        batch_texts, 
+                        show_progress=True
+                    )
+                    all_embeddings.extend(batch_embeddings)
+                    
+                    # Progress logging
+                    processed = min(i + batch_size, len(texts))
+                    logger.debug(f"🔄 {processed}/{len(texts)} chunks işlendi")
+                
+                embeddings = np.array(all_embeddings)
+            else:
+                # Küçük chunk setleri için tek seferde
+                embeddings = self.embedding_service.encode(texts, show_progress=True)
             
             # Chunk'lara embedding'leri ekle
             for i, chunk in enumerate(chunks):
                 chunk.embedding = embeddings[i]
             
-            logger.info("✅ Embedding'ler oluşturuldu")
+            # Performance metrics
+            processing_time = time.time() - start_time
+            chunks_per_second = len(chunks) / processing_time
+            
+            logger.info(f"✅ Embedding'ler oluşturuldu ({processing_time:.2f}s, {chunks_per_second:.1f} chunks/s)")
             
         except Exception as e:
             logger.error(f"❌ Embedding oluşturulamadı: {e}")
             # Embedding olmadan devam et
+        
+        return chunks
+    
+    def embed_chunks(self, chunks: List[TextChunk], batch_size: int = None) -> List[TextChunk]:
+        """
+        Public method for embedding chunks with automatic batch size optimization
+        
+        Args:
+            chunks: İşlenecek chunk'lar
+            batch_size: Manuel batch size (None ise otomatik)
+        """
+        if not chunks:
+            return chunks
+        
+        # Otomatik batch size optimization
+        if batch_size is None:
+            # GPU memory ve chunk sayısına göre optimize et
+            chunk_count = len(chunks)
+            if chunk_count <= 16:
+                batch_size = chunk_count  # Küçük setler için tek batch
+            elif chunk_count <= 100:
+                batch_size = 32  # Orta setler için 32
+            elif chunk_count <= 500:
+                batch_size = 64  # Büyük setler için 64
+            else:
+                batch_size = 128  # Çok büyük setler için 128
+            
+            logger.debug(f"🎯 Otomatik batch size: {batch_size} (toplam chunks: {chunk_count})")
+        
+        return self._create_embeddings(chunks, batch_size)
+    
+    def create_chunks(self, text: str, source_file: str, page_number: int, 
+                     content_type: str, metadata: Dict = None) -> List[TextChunk]:
+        """
+        Public method for creating chunks from text
+        
+        Args:
+            text: İşlenecek metin
+            source_file: Kaynak dosya adı
+            page_number: Sayfa numarası
+            content_type: İçerik türü
+            metadata: Ek metadata
+        """
+        chunks = self._create_text_chunks(
+            text=text,
+            source_file=source_file,
+            page_number=page_number,
+            content_type=content_type
+        )
+        
+        # Metadata ekle
+        if metadata:
+            for chunk in chunks:
+                if chunk.metadata is None:
+                    chunk.metadata = {}
+                chunk.metadata.update(metadata)
         
         return chunks
     

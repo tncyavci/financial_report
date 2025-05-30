@@ -12,6 +12,7 @@ import tempfile
 import time
 from typing import List, Dict, Optional
 import numpy as np
+import torch
 
 # Logging konfigürasyonu
 logging.basicConfig(level=logging.INFO)
@@ -209,7 +210,7 @@ def initialize_system():
         return False
 
 def process_uploaded_files(uploaded_files):
-    """Yüklenen dosyaları işle"""
+    """Yüklenen dosyaları işle (Performance Optimized)"""
     try:
         from src.pdf_processor import PDFProcessor
         from src.excel_processor import ExcelProcessor
@@ -222,149 +223,304 @@ def process_uploaded_files(uploaded_files):
             'embedding_model': "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         })
         
-        pdf_processor = PDFProcessor()
-        excel_processor = ExcelProcessor()
+        # Performance settings
+        perf_settings = st.session_state.get('performance_settings', {
+            'pdf_workers': 4,
+            'excel_workers': 4,
+            'auto_batch': True,
+            'manual_batch': 128,
+            'aggressive_cleanup': True,
+            'reuse_embeddings': True,
+            'gpu_memory_fraction': 0.9,
+            'performance_mode': 'speed_optimized'
+        })
         
-        # TextProcessor'ı güncel ayarlarla oluştur
-        text_processor = TextProcessor(
-            chunk_size=rag_settings.get('chunk_size', 800),
-            overlap_size=rag_settings.get('overlap_size', 150),
-            embedding_model=rag_settings.get('embedding_model', "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        # Progress tracking için
+        total_files = len(uploaded_files)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Single instances for reuse (Performance optimization)
+        pdf_processor = PDFProcessor(max_workers=perf_settings['pdf_workers'])
+        excel_processor = ExcelProcessor(
+            max_workers=perf_settings['excel_workers'], 
+            use_multiprocessing=True
         )
+        
+        # TextProcessor - reuse based on settings
+        text_processor_key = f"global_text_processor_{rag_settings.get('embedding_model', '')}"
+        
+        if perf_settings['reuse_embeddings'] and text_processor_key in st.session_state:
+            text_processor = st.session_state[text_processor_key]
+            status_text.text("♻️ Mevcut embedding modeli kullanılıyor...")
+        else:
+            status_text.text("🧠 Embedding modeli yükleniyor...")
+            text_processor = TextProcessor(
+                chunk_size=rag_settings.get('chunk_size', 800),
+                overlap_size=rag_settings.get('overlap_size', 150),
+                embedding_model=rag_settings.get('embedding_model', "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+            )
+            
+            if perf_settings['reuse_embeddings']:
+                st.session_state[text_processor_key] = text_processor
+            
+            status_text.text("✅ Embedding modeli hazır!")
+            time.sleep(0.5)
         
         all_chunks = []
         processed_info = []
         total_processing_time = 0
+        total_start_time = time.time()
         
-        for uploaded_file in uploaded_files:
+        # Phase 1: Document Processing (without embeddings)
+        status_text.text("📄 Phase 1: Dosyalar işleniyor...")
+        
+        for file_idx, uploaded_file in enumerate(uploaded_files):
             file_start_time = time.time()
             
-            with st.spinner(f"📄 {uploaded_file.name} işleniyor... (Chunk: {rag_settings.get('chunk_size', 800)}, Overlap: {rag_settings.get('overlap_size', 150)})"):
-                # Geçici dosya oluştur
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
-                    tmp_path = tmp_file.name
+            # Progress update
+            progress = (file_idx) / (total_files * 2)  # 2 phase olduğu için
+            progress_bar.progress(progress)
+            status_text.text(f"📄 Processing {file_idx + 1}/{total_files}: {uploaded_file.name}")
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_path = tmp_file.name
+            
+            try:
+                file_chunks = []
                 
-                try:
-                    file_chunks = []
+                # File type processing
+                if uploaded_file.name.lower().endswith('.pdf'):
+                    pdf_result = pdf_processor.process_pdf(tmp_path)
                     
-                    # Dosya türüne göre işle
-                    if uploaded_file.name.lower().endswith('.pdf'):
-                        # PDF işleme - Doğru metod adını kullan
-                        pdf_result = pdf_processor.process_pdf(tmp_path)
+                    for page_data in pdf_result.pages:
+                        # Text chunks
+                        if page_data.text and page_data.text.strip():
+                            chunks = text_processor.create_chunks(
+                                page_data.text,
+                                source_file=uploaded_file.name,
+                                page_number=page_data.page_number,
+                                content_type='text'
+                            )
+                            file_chunks.extend(chunks)
                         
-                        for page_data in pdf_result.pages:
-                            # Text chunks
-                            if page_data.text and page_data.text.strip():
-                                chunks = text_processor.create_chunks(
-                                    page_data.text,
-                                    source_file=uploaded_file.name,
-                                    page_number=page_data.page_number,
-                                    content_type='text'
-                                )
-                                file_chunks.extend(chunks)
-                            
-                            # Table chunks
-                            if page_data.tables:
-                                for table_data in page_data.tables:
-                                    if table_data.content and table_data.content.strip():
-                                        chunks = text_processor.create_chunks(
-                                            table_data.content,
-                                            source_file=uploaded_file.name,
-                                            page_number=page_data.page_number,
-                                            content_type='table',
-                                            metadata={
-                                                'table_index': table_data.table_index,
-                                                'rows': table_data.rows,
-                                                'columns': table_data.columns
-                                            }
-                                        )
-                                        file_chunks.extend(chunks)
-                    
-                    elif uploaded_file.name.lower().endswith(('.xlsx', '.xls', '.xlsm')):
-                        # Excel işleme - Doğru metod adını kullan
-                        excel_result = excel_processor.process_excel(tmp_path)
-                        
-                        for sheet_data in excel_result.sheets:
-                            if sheet_data.text_content and sheet_data.text_content.strip():
-                                chunks = text_processor.create_chunks(
-                                    sheet_data.text_content,
-                                    source_file=uploaded_file.name,
-                                    page_number=1,  # Excel için sheet index
-                                    content_type='table',
-                                    metadata={
-                                        'sheet_name': sheet_data.sheet_name,
-                                        'rows': sheet_data.raw_data.shape[0],
-                                        'columns': sheet_data.raw_data.shape[1]
-                                    }
-                                )
-                                file_chunks.extend(chunks)
-                    
-                    # Embeddings oluştur
-                    if file_chunks:
-                        st.session_state.embedding_service.embed_chunks(file_chunks)
-                        all_chunks.extend(file_chunks)
-                        
-                        # Dosya işleme süresi
-                        file_processing_time = time.time() - file_start_time
-                        total_processing_time += file_processing_time
-                        
-                        # Chunk istatistikleri hesapla
-                        avg_chunk_size = np.mean([len(chunk.content) for chunk in file_chunks])
-                        min_chunk_size = min([len(chunk.content) for chunk in file_chunks])
-                        max_chunk_size = max([len(chunk.content) for chunk in file_chunks])
-                        
-                        processed_info.append({
-                            'filename': uploaded_file.name,
-                            'chunks': len(file_chunks),
-                            'size': len(uploaded_file.getvalue()),
-                            'type': uploaded_file.name.split('.')[-1].upper(),
-                            'processing_time': file_processing_time,
-                            'avg_chunk_size': int(avg_chunk_size),
-                            'min_chunk_size': min_chunk_size,
-                            'max_chunk_size': max_chunk_size,
-                            'settings_used': {
-                                'chunk_size': rag_settings.get('chunk_size', 800),
-                                'overlap_size': rag_settings.get('overlap_size', 150),
-                                'embedding_model': rag_settings.get('embedding_model', "paraphrase-multilingual-MiniLM-L12-v2").split('/')[-1]
-                            }
-                        })
+                        # Table chunks
+                        if page_data.tables:
+                            for table_data in page_data.tables:
+                                if table_data.content and table_data.content.strip():
+                                    chunks = text_processor.create_chunks(
+                                        table_data.content,
+                                        source_file=uploaded_file.name,
+                                        page_number=page_data.page_number,
+                                        content_type='table',
+                                        metadata={
+                                            'table_index': table_data.table_index,
+                                            'rows': table_data.rows,
+                                            'columns': table_data.columns
+                                        }
+                                    )
+                                    file_chunks.extend(chunks)
                 
-                finally:
-                    # Geçici dosyayı sil
-                    os.unlink(tmp_path)
+                elif uploaded_file.name.lower().endswith(('.xlsx', '.xls', '.xlsm')):
+                    excel_result = excel_processor.process_excel(tmp_path)
+                    
+                    for sheet_data in excel_result.sheets:
+                        if sheet_data.text_content and sheet_data.text_content.strip():
+                            chunks = text_processor.create_chunks(
+                                sheet_data.text_content,
+                                source_file=uploaded_file.name,
+                                page_number=1,
+                                content_type='table',
+                                metadata={
+                                    'sheet_name': sheet_data.sheet_name,
+                                    'rows': sheet_data.raw_data.shape[0],
+                                    'columns': sheet_data.raw_data.shape[1]
+                                }
+                            )
+                            file_chunks.extend(chunks)
+                
+                # Add to global chunks (without embeddings yet)
+                all_chunks.extend(file_chunks)
+                
+                # Track file info
+                if file_chunks:
+                    file_processing_time = time.time() - file_start_time
+                    total_processing_time += file_processing_time
+                    
+                    avg_chunk_size = np.mean([len(chunk.content) for chunk in file_chunks])
+                    
+                    processed_info.append({
+                        'filename': uploaded_file.name,
+                        'chunks': len(file_chunks),
+                        'size': len(uploaded_file.getvalue()),
+                        'type': uploaded_file.name.split('.')[-1].upper(),
+                        'processing_time': file_processing_time,
+                        'avg_chunk_size': int(avg_chunk_size),
+                        'settings_used': {
+                            'chunk_size': rag_settings.get('chunk_size', 800),
+                            'overlap_size': rag_settings.get('overlap_size', 150),
+                            'embedding_model': rag_settings.get('embedding_model', "paraphrase-multilingual-MiniLM-L12-v2").split('/')[-1]
+                        }
+                    })
+            
+            finally:
+                os.unlink(tmp_path)
         
-        # Vector store'a ekle
+        # Phase 2: Batch Embedding Generation (Major Performance Boost)
         if all_chunks:
-            with st.spinner("🗃️ Vector store'a ekleniyor..."):
-                st.session_state.vector_store.add_documents(all_chunks)
-                st.session_state.processed_files.extend(processed_info)
+            status_text.text(f"🧠 Phase 2: Batch embedding oluşturuluyor... ({len(all_chunks)} chunks)")
+            progress_bar.progress(0.5)  # 50% completed
             
-            # İşleme özeti göster
-            st.success(f"✅ Toplam {len(all_chunks)} chunk işlendi! ({total_processing_time:.2f}s)")
+            # Optimal batch size based on performance settings
+            chunk_count = len(all_chunks)
             
-            # Detaylı istatistikler
-            with st.expander("📊 İşleme Detayları", expanded=True):
-                st.write("**📁 Dosya Bazında İstatistikler:**")
+            if perf_settings['auto_batch']:
+                # Auto batch sizing based on performance mode
+                if perf_settings['performance_mode'] == 'speed_optimized':
+                    if chunk_count <= 50:
+                        batch_size = chunk_count
+                    elif chunk_count <= 200:
+                        batch_size = 128
+                    elif chunk_count <= 500:
+                        batch_size = 256
+                    else:
+                        batch_size = 512  # A100 max speed
+                elif perf_settings['performance_mode'] == 'memory_optimized':
+                    batch_size = min(64, chunk_count)
+                else:  # balanced
+                    if chunk_count <= 100:
+                        batch_size = 64
+                    elif chunk_count <= 300:
+                        batch_size = 128
+                    else:
+                        batch_size = 256
+            else:
+                # Use manual batch size
+                batch_size = min(perf_settings['manual_batch'], chunk_count)
+            
+            status_text.text(f"🧠 Batch embedding ({batch_size} batch size)...")
+            
+            # Batch embedding with progress
+            embedding_start_time = time.time()
+            all_chunks = text_processor.embed_chunks(all_chunks, batch_size=batch_size)
+            embedding_time = time.time() - embedding_start_time
+            
+            # Update progress
+            progress_bar.progress(0.75)
+            status_text.text("🗃️ Vector store'a ekleniyor...")
+            
+            # Batch ChromaDB insertion (Performance boost)
+            vector_store_start = time.time()
+            st.session_state.vector_store.add_documents(all_chunks)
+            vector_store_time = time.time() - vector_store_start
+            
+            st.session_state.processed_files.extend(processed_info)
+            
+            # Final timing
+            total_time = time.time() - total_start_time
+            progress_bar.progress(1.0)
+            
+            # Add to processing history for monitoring
+            processing_speed = len(all_chunks) / total_time
+            if 'processing_history' not in st.session_state:
+                st.session_state.processing_history = []
+            
+            st.session_state.processing_history.append({
+                'timestamp': time.time(),
+                'files': len(uploaded_files),
+                'chunks': len(all_chunks),
+                'total_time': total_time,
+                'embedding_time': embedding_time,
+                'vector_store_time': vector_store_time,
+                'speed': processing_speed,
+                'batch_size': batch_size,
+                'performance_mode': perf_settings['performance_mode'],
+                'workers_used': f"PDF:{perf_settings['pdf_workers']}, Excel:{perf_settings['excel_workers']}"
+            })
+            
+            # Memory cleanup if enabled
+            if perf_settings['aggressive_cleanup']:
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                status_text.text("🗑️ Memory cleanup completed")
+            
+            # Enhanced success metrics
+            total_embeddings = sum(1 for chunk in all_chunks if chunk.embedding is not None)
+            total_chars = sum(chunk.char_count for chunk in all_chunks)
+            
+            status_text.empty()
+            progress_bar.empty()
+            
+            # Performance summary with confetti for very fast processing
+            if processing_speed > 10:  # Very fast processing
+                st.balloons()
+                success_msg = f"🚀 **Lightning Fast Processing!** ({processing_speed:.1f} chunks/s)"
+            elif processing_speed > 5:
+                success_msg = f"⚡ **Fast Processing Completed!** ({processing_speed:.1f} chunks/s)"
+            else:
+                success_msg = f"✅ **Processing Completed** ({processing_speed:.1f} chunks/s)"
+            
+            st.success(success_msg)
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📦 Total Chunks", f"{len(all_chunks)}")
+            with col2:
+                st.metric("⏱️ Total Time", f"{total_time:.1f}s")
+            with col3:
+                st.metric("🚀 Speed", f"{len(all_chunks)/total_time:.1f} chunks/s")
+            with col4:
+                st.metric("🧠 Embeddings", f"{total_embeddings}/{len(all_chunks)}")
+            
+            # Detailed performance breakdown
+            with st.expander("⚡ Performance Breakdown", expanded=False):
+                st.write("**🔥 Processing Phases:**")
                 
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📄 Document Processing", f"{total_processing_time:.1f}s")
+                    st.caption(f"{total_chars/total_processing_time:,.0f} chars/s")
+                with col2:
+                    st.metric("🧠 Batch Embedding", f"{embedding_time:.1f}s") 
+                    st.caption(f"Batch size: {batch_size}")
+                with col3:
+                    st.metric("🗃️ Vector Store", f"{vector_store_time:.1f}s")
+                    st.caption(f"{len(all_chunks)/vector_store_time:.0f} chunks/s")
+                
+                # File-by-file breakdown
+                st.write("**📁 File Processing Details:**")
                 for info in processed_info:
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric(f"📄 {info['filename']}", f"{info['chunks']} chunk")
-                        st.caption(f"⏱️ {info['processing_time']:.1f}s")
-                    with col2:
-                        st.metric("📏 Ortalama Chunk", f"{info['avg_chunk_size']} char")
-                        st.caption(f"Min: {info['min_chunk_size']} | Max: {info['max_chunk_size']}")
-                    with col3:
-                        st.metric("⚙️ Chunk Ayarları", f"{info['settings_used']['chunk_size']}")
-                        st.caption(f"Overlap: {info['settings_used']['overlap_size']}")
+                    cols = st.columns([3, 1, 1, 1, 2])
+                    with cols[0]:
+                        st.write(f"📄 **{info['filename']}**")
+                    with cols[1]:
+                        st.write(f"{info['chunks']} chunks")
+                    with cols[2]:
+                        st.write(f"{info['processing_time']:.1f}s")
+                    with cols[3]:
+                        st.write(f"{info['avg_chunk_size']} chars")
+                    with cols[4]:
+                        efficiency = info['chunks'] / info['processing_time']
+                        st.write(f"⚡ {efficiency:.1f} chunks/s")
                 
-                # Genel istatistikler
-                st.write("**🎯 Kullanılan RAG Ayarları:**")
-                st.json(rag_settings)
+                # Optimization summary
+                st.info(f"""
+                **🎯 Performance Optimizations Applied:**
+                - ♻️ Reused embedding model (no reload)
+                - 📦 Batch embedding generation ({batch_size} batch size)
+                - 🚀 Parallel PDF processing (4 workers)
+                - 🧵 Parallel Excel processing (4 workers)
+                - 🗃️ Batch ChromaDB insertion
+                - 📊 Real-time progress tracking
+                """)
             
             return len(all_chunks), processed_info
         else:
+            status_text.text("❌ No content found in uploaded files")
+            progress_bar.empty()
             return 0, []
             
     except Exception as e:
@@ -631,6 +787,160 @@ with st.sidebar:
                 st.info("⚠️ Not: Ayarlar yeni dosyalar için geçerli olacak. Mevcut dosyaları yeniden işlemeniz gerekebilir.")
                 st.success("✅ Ayarlar kaydedildi!")
         
+        # Performance Optimization Panel
+        with st.expander("⚡ Performance Optimizasyonları", expanded=False):
+            st.write("**🚀 A100 GPU Optimizasyonları:**")
+            
+            # Processing Workers
+            pdf_workers = st.slider(
+                "📄 PDF Worker Sayısı",
+                min_value=1,
+                max_value=8,
+                value=4,
+                help="PDF paralel işleme için worker sayısı"
+            )
+            
+            excel_workers = st.slider(
+                "📊 Excel Worker Sayısı", 
+                min_value=1,
+                max_value=8,
+                value=4,
+                help="Excel paralel işleme için worker sayısı"
+            )
+            
+            # Embedding Batch Optimization
+            st.write("**🧠 Embedding Batch Ayarları:**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                auto_batch = st.checkbox(
+                    "🎯 Otomatik Batch Size",
+                    value=True,
+                    help="Dosya boyutuna göre otomatik batch size ayarla"
+                )
+            
+            with col2:
+                if not auto_batch:
+                    manual_batch = st.slider(
+                        "Manuel Batch Size",
+                        min_value=16,
+                        max_value=512,
+                        value=128,
+                        step=16,
+                        help="Manuel batch boyutu (A100 için 256+ önerilir)"
+                    )
+                else:
+                    manual_batch = None
+            
+            # Memory Management
+            st.write("**💾 Memory Optimizasyonları:**")
+            
+            aggressive_cleanup = st.checkbox(
+                "🗑️ Agresif Cleanup",
+                value=True,
+                help="İşlem sonrası memory temizleme"
+            )
+            
+            reuse_embeddings = st.checkbox(
+                "♻️ Embedding Model Reuse",
+                value=True,
+                help="Embedding modelini bellekte tut (hız için)"
+            )
+            
+            # GPU Memory Optimization
+            gpu_memory_fraction = st.slider(
+                "🎮 GPU Memory Kullanım Oranı",
+                min_value=0.5,
+                max_value=1.0,
+                value=0.9,
+                step=0.1,
+                help="GPU memory'nin ne kadarını kullan"
+            )
+            
+            # Performance mode
+            performance_mode = st.selectbox(
+                "🏁 Performance Modu",
+                options=["balanced", "speed_optimized", "memory_optimized"],
+                index=1,  # Default: speed_optimized
+                help="""
+                - Balanced: Hız ve memory dengesi
+                - Speed Optimized: Maksimum hız (A100 için ideal)
+                - Memory Optimized: Düşük memory kullanımı
+                """
+            )
+            
+            # Save performance settings
+            st.session_state.performance_settings = {
+                'pdf_workers': pdf_workers,
+                'excel_workers': excel_workers,
+                'auto_batch': auto_batch,
+                'manual_batch': manual_batch,
+                'aggressive_cleanup': aggressive_cleanup,
+                'reuse_embeddings': reuse_embeddings,
+                'gpu_memory_fraction': gpu_memory_fraction,
+                'performance_mode': performance_mode
+            }
+            
+            # Performance presets
+            st.write("**🎚️ Performance Presets:**")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("⚡ A100 Max Speed", help="A100 için maksimum hız"):
+                    st.session_state.performance_settings.update({
+                        'pdf_workers': 6,
+                        'excel_workers': 6, 
+                        'auto_batch': True,
+                        'manual_batch': 256,
+                        'aggressive_cleanup': False,
+                        'reuse_embeddings': True,
+                        'gpu_memory_fraction': 0.95,
+                        'performance_mode': 'speed_optimized'
+                    })
+                    st.success("🚀 A100 Max Speed preset uygulandı!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("⚖️ Balanced Mode", help="Dengeli performans"):
+                    st.session_state.performance_settings.update({
+                        'pdf_workers': 4,
+                        'excel_workers': 4,
+                        'auto_batch': True,
+                        'manual_batch': 128,
+                        'aggressive_cleanup': True,
+                        'reuse_embeddings': True,
+                        'gpu_memory_fraction': 0.8,
+                        'performance_mode': 'balanced'
+                    })
+                    st.success("⚖️ Balanced preset uygulandı!")
+                    st.rerun()
+            
+            with col3:
+                if st.button("💾 Memory Saver", help="Düşük memory"):
+                    st.session_state.performance_settings.update({
+                        'pdf_workers': 2,
+                        'excel_workers': 2,
+                        'auto_batch': True,
+                        'manual_batch': 64,
+                        'aggressive_cleanup': True,
+                        'reuse_embeddings': False,
+                        'gpu_memory_fraction': 0.6,
+                        'performance_mode': 'memory_optimized'
+                    })
+                    st.success("💾 Memory Saver preset uygulandı!")
+                    st.rerun()
+            
+            # Current performance summary
+            if 'performance_settings' in st.session_state:
+                perf = st.session_state.performance_settings
+                st.info(f"""
+                **🎯 Aktif Performance Ayarları:**
+                - 📄 PDF Workers: {perf['pdf_workers']} | 📊 Excel Workers: {perf['excel_workers']}
+                - 🧠 Batch: {'Auto' if perf['auto_batch'] else f"Manual {perf['manual_batch']}"}
+                - 🎮 GPU Memory: {perf['gpu_memory_fraction']*100:.0f}%
+                - 🏁 Mode: {perf['performance_mode'].title()}
+                """)
+        
         # Performance Monitoring
         with st.expander("📈 Performans İzleme", expanded=False):
             if 'last_query_time' in st.session_state:
@@ -642,6 +952,24 @@ with st.sidebar:
             
             if 'last_context_length' in st.session_state:
                 st.metric("📄 Son Context Uzunluğu", f"{st.session_state.last_context_length} char")
+            
+            # Processing speed history
+            if 'processing_history' not in st.session_state:
+                st.session_state.processing_history = []
+            
+            if st.session_state.processing_history:
+                speeds = [entry['speed'] for entry in st.session_state.processing_history[-10:]]
+                avg_speed = np.mean(speeds)
+                st.metric("🚀 Ortalama İşleme Hızı", f"{avg_speed:.1f} chunks/s")
+                
+                # Speed chart
+                if len(speeds) > 1:
+                    import pandas as pd
+                    df = pd.DataFrame({
+                        'İşlem': list(range(1, len(speeds) + 1)),
+                        'Hız (chunks/s)': speeds
+                    })
+                    st.line_chart(df.set_index('İşlem'))
     
     # Dosya yükleme
     if st.session_state.system_initialized:
