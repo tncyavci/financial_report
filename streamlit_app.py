@@ -185,10 +185,23 @@ def initialize_system():
         
         # LLM service başlat
         if st.session_state.llm_service is None:
-            model_path = "/content/drive/MyDrive/Colab Notebooks/kredi_rag_sistemi/backup/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+            # Çoklu model path desteği
+            possible_model_paths = [
+                "/content/drive/MyDrive/Colab Notebooks/kredi_rag_sistemi/backup/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf",  # Colab
+                "./models/mistral-7b-instruct-v0.2.Q4_K_M.gguf",  # Local
+                "~/Downloads/mistral-7b-instruct-v0.2.Q4_K_M.gguf",  # Local Downloads
+                "/Users/tuncayavci/financial_report/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"  # Your path
+            ]
             
-            # Colab ortamı kontrol
-            if os.path.exists(model_path):
+            model_path = None
+            for path in possible_model_paths:
+                expanded_path = os.path.expanduser(path)
+                if os.path.exists(expanded_path):
+                    model_path = expanded_path
+                    break
+            
+            # Model yükleme
+            if model_path:
                 model_name = os.path.basename(model_path)
                 status_text.text(f"🤖 GGUF modeli yükleniyor: {model_name}")
                 st.session_state.llm_service = GGUFModelService(model_path=model_path)
@@ -196,11 +209,13 @@ def initialize_system():
                 llm_model_info = f"GGUF: {model_name}"
             else:
                 status_text.text("🤖 HuggingFace modeli yükleniyor...")
-                st.warning("⚠️ Model dosyası bulunamadı. HuggingFace modeli kullanılacak.")
+                st.warning("⚠️ GGUF model dosyası bulunamadı. HuggingFace modeli kullanılacak.")
                 from src.llm_service_local import HuggingFaceModelService
-                st.session_state.llm_service = HuggingFaceModelService()
+                # Türkçe uyumlu model
+                default_model = "microsoft/DialoGPT-medium"
+                st.session_state.llm_service = HuggingFaceModelService(model_id=default_model)
                 logger.info("✅ HuggingFace LLM service başlatıldı")
-                llm_model_info = "HuggingFace: Default Model"
+                llm_model_info = f"HuggingFace: {default_model}"
         
         progress_bar.progress(1.0)
         status_text.text("✅ Sistem başarıyla başlatıldı!")
@@ -637,7 +652,57 @@ def generate_response(query: str) -> str:
         st.session_state.last_similarity_scores = similarity_scores
         st.session_state.last_context_length = len(combined_context)
         
-        # Debug bilgileri göster
+        # LLM ile cevap üret - EXPANDER'DAN ÖNCE!
+        with st.spinner("🤖 AI cevap üretiyor..."):
+            # Debug: LLM service durumu
+            if not st.session_state.llm_service:
+                return "❌ LLM servisi başlatılmamış. Lütfen sistemi yeniden başlatın."
+            
+            # Model info debug
+            model_info = st.session_state.llm_service.get_model_info()
+            st.session_state.debug_model_info = model_info
+            
+            result = st.session_state.llm_service.generate_response(
+                query=query,
+                context=combined_context
+            )
+            
+            # Debug: Result türü
+            st.session_state.debug_result_type = type(result).__name__
+            st.session_state.debug_result_content = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
+            
+            # Tuple handling - LLM service (response, duration) döndürüyor
+            if isinstance(result, tuple) and len(result) == 2:
+                response, generation_duration = result
+            else:
+                response = str(result)
+                generation_duration = 0.0
+        
+        # Query süresini kaydet
+        query_time = time.time() - start_time
+        st.session_state.last_query_time = query_time
+        
+        # Response kalitesi kontrolü
+        if not response or len(response.strip()) < 10:
+            return "❌ Cevap üretilirken bir sorun oluştu. Lütfen sorunuzu yeniden ifade edin."
+        
+        # Kaynak bilgilerini ekle
+        source_info = []
+        seen_sources = set()
+        
+        for result in filtered_results:
+            source_key = f"{result.source_file}_{result.page_number}"
+            if source_key not in seen_sources:
+                seen_sources.add(source_key)
+                source_info.append(f"📄 {result.source_file} (Sayfa {result.page_number})")
+        
+        if source_info:
+            response += f"\n\n**📚 Kaynaklar:**\n" + "\n".join(source_info)
+        
+        # Performance özeti ekle
+        response += f"\n\n**⚡ Performans:** {query_time:.2f}s | {len(filtered_results)} sonuç | Ort. benzerlik: {np.mean(similarity_scores):.3f}"
+        
+        # Debug bilgileri göster - RESPONSE OLUŞTURDUKTAN SONRA
         with st.expander("🔍 RAG İşlemi Detayları", expanded=False):
             st.write("**⚙️ Kullanılan Ayarlar:**")
             col1, col2, col3 = st.columns(3)
@@ -663,40 +728,28 @@ def generate_response(query: str) -> str:
                 preview = result.chunk.content[:150] + "..." if len(result.chunk.content) > 150 else result.chunk.content
                 st.code(preview)
             
-            # Context önizlemesi
-            with st.expander("📋 Oluşturulan Context", expanded=False):
-                st.text_area("Context", combined_context, height=200)
-        
-        # LLM ile cevap üret
-        with st.spinner("🤖 AI cevap üretiyor..."):
-            response = st.session_state.llm_service.generate_response(
-                query=query,
-                context=combined_context
-            )
-        
-        # Query süresini kaydet
-        query_time = time.time() - start_time
-        st.session_state.last_query_time = query_time
-        
-        # Response kalitesi kontrolü
-        if len(response.strip()) < 10:
-            return "❌ Cevap üretilirken bir sorun oluştu. Lütfen sorunuzu yeniden ifade edin."
-        
-        # Kaynak bilgilerini ekle
-        source_info = []
-        seen_sources = set()
-        
-        for result in filtered_results:
-            source_key = f"{result.source_file}_{result.page_number}"
-            if source_key not in seen_sources:
-                seen_sources.add(source_key)
-                source_info.append(f"📄 {result.source_file} (Sayfa {result.page_number})")
-        
-        if source_info:
-            response += f"\n\n**📚 Kaynaklar:**\n" + "\n".join(source_info)
-        
-        # Performance özeti ekle
-        response += f"\n\n**⚡ Performans:** {query_time:.2f}s | {len(filtered_results)} sonuç | Ort. benzerlik: {np.mean(similarity_scores):.3f}"
+            # Context önizlemesi - nested expander kaldırıldı
+            st.write("**📋 Oluşturulan Context:**")
+            if st.checkbox("Context göster", key="show_context"):
+                st.text_area("Context", combined_context, height=200, key="context_area")
+            
+            # Debug bilgileri
+            if st.checkbox("🔧 Debug Bilgileri", key="show_debug"):
+                st.write("**🤖 Model Durumu:**")
+                if 'debug_model_info' in st.session_state:
+                    model_info = st.session_state.debug_model_info
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"• Model Adı: {model_info.get('model_name', 'N/A')}")
+                        st.write(f"• Model Yüklü: {model_info.get('model_loaded', False)}")
+                    with col2:
+                        st.write(f"• Servis Türü: {model_info.get('service_type', 'N/A')}")
+                        st.write(f"• Device: {model_info.get('device', 'N/A')}")
+                
+                st.write("**📤 Response Detayları:**")
+                if 'debug_result_type' in st.session_state:
+                    st.write(f"• Result Türü: {st.session_state.debug_result_type}")
+                    st.code(st.session_state.debug_result_content)
         
         return response
         

@@ -117,17 +117,19 @@ class PDFProcessor:
         """Sayfaları paralel olarak işle"""
         pages = []
         
-        # Küçük PDF'ler için paralel işleme gerek yok
-        if total_pages <= 3:
-            logger.info("📄 Küçük PDF - sıralı işleme")
-            for page_num in range(total_pages):
-                page_data = self._process_single_page(pdf_path, page_num)
-                if page_data:
-                    pages.append(page_data)
-            return pages
+        # Küçük ve orta PDF'ler için sıralı işleme (daha hızlı)
+        if total_pages <= 10:  # 10 sayfaya kadar sıralı işleme
+            logger.info(f"📄 {total_pages} sayfa - optimize edilmiş sıralı işleme")
+            return self._process_pages_sequential_optimized(pdf_path, total_pages)
         
         # Büyük PDF'ler için paralel işleme
         logger.info(f"🚀 Paralel işleme başlatılıyor - {self.max_workers} worker")
+        
+        # Mac için multiprocessing problemlerini azalt
+        import platform
+        if platform.system() == 'Darwin':  # macOS
+            logger.info("🍎 macOS tespit edildi - sıralı işleme kullanılıyor")
+            return self._process_pages_sequential_optimized(pdf_path, total_pages)
         
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             # Tüm sayfalar için task'ları başlat
@@ -150,6 +152,159 @@ class PDFProcessor:
         # Sayfa sırasına göre sırala
         pages.sort(key=lambda x: x.page_number)
         logger.info(f"✅ {len(pages)} sayfa başarıyla işlendi")
+        return pages
+    
+    def _process_pages_sequential_optimized(self, pdf_path: str, total_pages: int) -> List[PageData]:
+        """
+        Optimize edilmiş sıralı sayfa işleme
+        PDF'i bir kez açıp tüm sayfaları işler
+        """
+        pages = []
+        
+        try:
+            # PyMuPDF ile bir kez aç
+            with fitz.open(pdf_path) as doc:
+                logger.info(f"📖 PDF açıldı - {total_pages} sayfa işlenecek")
+                
+                # pdfplumber ile de bir kez aç
+                import pdfplumber
+                with pdfplumber.open(pdf_path) as pdf_plumber:
+                    
+                    for page_num in range(total_pages):
+                        # Progress göster
+                        if page_num % 5 == 0 or page_num == total_pages - 1:
+                            logger.info(f"📄 Sayfa {page_num + 1}/{total_pages} işleniyor...")
+                        
+                        # Metin çıkarma (PyMuPDF - zaten açık)
+                        text = self._extract_text_from_open_doc(doc, page_num)
+                        
+                        # Tablo çıkarma (pdfplumber - zaten açık)
+                        tables = self._extract_tables_from_open_pdf(pdf_plumber, page_num)
+                        
+                        # Sayfa metadata'sı
+                        metadata = {
+                            'text_length': len(text),
+                            'table_count': len(tables),
+                            'has_text': len(text.strip()) > 10,
+                            'has_tables': len(tables) > 0
+                        }
+                        
+                        page_data = PageData(
+                            text=text,
+                            tables=tables,
+                            page_number=page_num + 1,  # 1-indexed
+                            metadata=metadata
+                        )
+                        
+                        pages.append(page_data)
+            
+            logger.info(f"✅ {len(pages)} sayfa optimize edilmiş şekilde işlendi")
+            return pages
+            
+        except Exception as e:
+            logger.error(f"❌ Optimize edilmiş sayfa işleme hatası: {e}")
+            # Fallback to original method
+            return self._process_pages_fallback(pdf_path, total_pages)
+    
+    def _extract_text_from_open_doc(self, doc, page_num: int) -> str:
+        """Açık PyMuPDF dökümanından metin çıkar"""
+        try:
+            page = doc[page_num]
+            text = page.get_text()
+            return self._clean_text(text)
+        except Exception as e:
+            logger.warning(f"⚠️ PyMuPDF metin çıkarma hatası sayfa {page_num + 1}: {e}")
+            return ""
+    
+    def _extract_tables_from_open_pdf(self, pdf_plumber, page_num: int) -> List[TableData]:
+        """Açık pdfplumber dökümanından tablo çıkar"""
+        tables = []
+        
+        try:
+            if page_num >= len(pdf_plumber.pages):
+                return tables
+            
+            page = pdf_plumber.pages[page_num]
+            extracted_tables = page.extract_tables()
+            
+            if not extracted_tables:
+                return tables
+            
+            for table_idx, table in enumerate(extracted_tables):
+                if not table or len(table) < 2:  # Çok küçük tablolar
+                    continue
+                
+                # Optimize edilmiş tablo formatlama
+                formatted_table = self._format_table_fast(table)
+                
+                if formatted_table and len(formatted_table) > 20:
+                    table_data = TableData(
+                        content=formatted_table,
+                        page_number=page_num + 1,
+                        table_index=table_idx,
+                        rows=len(table),
+                        columns=len(table[0]) if table else 0,
+                        metadata={
+                            'extraction_method': 'pdfplumber_optimized',
+                            'table_area': 'detected'
+                        }
+                    )
+                    tables.append(table_data)
+            
+            return tables
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Tablo çıkarma hatası sayfa {page_num + 1}: {e}")
+            return tables
+    
+    def _format_table_fast(self, table: List[List]) -> str:
+        """Hızlı tablo formatlama (DataFrame olmadan)"""
+        if not table:
+            return ""
+        
+        try:
+            formatted = "TABLO:\n"
+            
+            # Maksimum 50 satır işle (performance için)
+            max_rows = min(50, len(table))
+            
+            for i, row in enumerate(table[:max_rows]):
+                if not row:
+                    continue
+                
+                # None değerleri temizle
+                cleaned_row = [str(cell).strip() if cell is not None else "" for cell in row]
+                
+                # Boş satırları atla
+                if not any(cell for cell in cleaned_row):
+                    continue
+                
+                # Satırı formatla
+                row_text = " | ".join(cleaned_row[:10])  # Maksimum 10 sütun
+                if row_text.strip():
+                    formatted += row_text + "\n"
+                
+                # Performance: çok uzun tablolar için break
+                if i > 30:  # Maksimum 30 satır
+                    formatted += "... (tablo devam ediyor)\n"
+                    break
+            
+            return formatted
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Hızlı tablo formatlama hatası: {e}")
+            return "TABLO: (formatlanamadı)\n"
+    
+    def _process_pages_fallback(self, pdf_path: str, total_pages: int) -> List[PageData]:
+        """Fallback: eski yöntem"""
+        pages = []
+        logger.info("🔄 Fallback işleme moduna geçiliyor")
+        
+        for page_num in range(total_pages):
+            page_data = self._process_single_page(pdf_path, page_num)
+            if page_data:
+                pages.append(page_data)
+                
         return pages
     
     def _process_single_page(self, pdf_path: str, page_num: int) -> Optional[PageData]:
