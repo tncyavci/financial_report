@@ -322,6 +322,7 @@ class RetrievalService:
         """
         self.vector_store = vector_store
         self.embedding_service = embedding_service
+        self._query_cache = {}  # Query embedding cache for speed
         
         logger.info("🔍 ChromaDB RetrievalService başlatıldı")
     
@@ -340,8 +341,22 @@ class RetrievalService:
         logger.debug(f"🔍 Query: {query[:100]}...")
         
         try:
-            # Query embedding'i oluştur
-            query_embedding = self.embedding_service.encode([query])[0]
+            # Query embedding cache kontrolü
+            query_key = f"{query}_{n_results}"
+            if query_key in self._query_cache:
+                query_embedding = self._query_cache[query_key]
+                logger.debug("⚡ Cache'den embedding alındı")
+            else:
+                # Query embedding'i oluştur
+                query_embedding = self.embedding_service.encode([query])[0]
+                self._query_cache[query_key] = query_embedding
+                
+                # Cache boyutu kontrolü (maksimum 50 query)
+                if len(self._query_cache) > 50:
+                    # En eski 10'unu sil
+                    keys_to_remove = list(self._query_cache.keys())[:10]
+                    for key in keys_to_remove:
+                        del self._query_cache[key]
             
             # ChromaDB search
             search_results = self.vector_store.search(query_embedding, n_results)
@@ -417,35 +432,42 @@ class RetrievalService:
             )
     
     def _combine_context(self, search_results: List[SearchResult], max_context_length: int = 3000) -> str:
-        """Search sonuçlarını birleştirip context oluştur"""
+        """Search sonuçlarını birleştirip context oluştur (Optimized)"""
         if not search_results:
             return ""
         
         context_parts = []
+        total_length = 0
         seen_content = set()  # Duplicate content kontrolü
         
         for i, result in enumerate(search_results):
             chunk = result.chunk
             
-            # Duplicate kontrolü (ilk 100 karakter ile)
-            content_hash = chunk.content[:100]
+            # Duplicate kontrolü (ilk 50 karakter ile - daha hızlı)
+            content_hash = chunk.content[:50]
             if content_hash in seen_content:
                 continue
             seen_content.add(content_hash)
             
-            # Context formatı
-            context_part = f"""
-[Kaynak {i+1}: {result.source_file} - Sayfa {result.page_number} - Tip: {result.content_type}]
-{chunk.content}
-"""
-            context_parts.append(context_part.strip())
+            # Simplified context format (daha hızlı)
+            content = chunk.content
+            if total_length + len(content) > max_context_length:
+                # Kalan alanı kullan
+                remaining_space = max_context_length - total_length - 50
+                if remaining_space > 100:
+                    content = content[:remaining_space] + "..."
+                else:
+                    break
+            
+            context_parts.append(content)
+            total_length += len(content)
+            
+            # Early exit if max length reached
+            if total_length >= max_context_length:
+                break
         
+        # Join once (more efficient)
         combined = "\n\n".join(context_parts)
-        
-        # Context boyutu kontrolü (çok uzunsa kısalt)
-        if len(combined) > max_context_length:
-            combined = combined[:max_context_length] + "\n\n[Context kısaltıldı...]"
-        
         return combined
     
     def get_retrieval_stats(self) -> Dict:

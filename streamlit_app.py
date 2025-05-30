@@ -614,11 +614,8 @@ def process_uploaded_files(uploaded_files):
         return 0, []
 
 def generate_response(query: str) -> str:
-    """Query için cevap üret"""
+    """Query için cevap üret (Speed Optimized)"""
     try:
-        # Performance tracking başlat
-        start_time = time.time()
-        
         # RAG ayarlarını al
         rag_settings = st.session_state.get('rag_settings', {
             'top_k': 5,
@@ -649,29 +646,16 @@ def generate_response(query: str) -> str:
         # Context'i yeniden oluştur (eşik sonrası)
         combined_context = _build_filtered_context(filtered_results, rag_settings)
         
-        # Performance metrikleri kaydet
-        similarity_scores = [result.similarity_score for result in filtered_results]
-        st.session_state.last_similarity_scores = similarity_scores
-        st.session_state.last_context_length = len(combined_context)
-        
-        # LLM ile cevap üret - EXPANDER'DAN ÖNCE!
+        # LLM ile cevap üret
         with st.spinner("🤖 AI cevap üretiyor..."):
-            # Debug: LLM service durumu
+            # LLM service kontrolü
             if not st.session_state.llm_service:
                 return "❌ LLM servisi başlatılmamış. Lütfen sistemi yeniden başlatın."
-            
-            # Model info debug
-            model_info = st.session_state.llm_service.get_model_info()
-            st.session_state.debug_model_info = model_info
             
             result = st.session_state.llm_service.generate_response(
                 query=query,
                 context=combined_context
             )
-            
-            # Debug: Result türü
-            st.session_state.debug_result_type = type(result).__name__
-            st.session_state.debug_result_content = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
             
             # Tuple handling - LLM service (response, duration) döndürüyor
             if isinstance(result, tuple) and len(result) == 2:
@@ -680,78 +664,14 @@ def generate_response(query: str) -> str:
                 response = str(result)
                 generation_duration = 0.0
         
-        # Query süresini kaydet
-        query_time = time.time() - start_time
-        st.session_state.last_query_time = query_time
-        
         # Response kalitesi kontrolü
         if not response or len(response.strip()) < 10:
             return "❌ Cevap üretilirken bir sorun oluştu. Lütfen sorunuzu yeniden ifade edin."
         
         # Kaynak bilgilerini ekle
-        source_info = []
-        seen_sources = set()
-        
-        for result in filtered_results:
-            source_key = f"{result.source_file}_{result.page_number}"
-            if source_key not in seen_sources:
-                seen_sources.add(source_key)
-                source_info.append(f"📄 {result.source_file} (Sayfa {result.page_number})")
-        
-        if source_info:
-            response += f"\n\n**📚 Kaynaklar:**\n" + "\n".join(source_info)
-        
-        # Performance özeti ekle
-        response += f"\n\n**⚡ Performans:** {query_time:.2f}s | {len(filtered_results)} sonuç | Ort. benzerlik: {np.mean(similarity_scores):.3f}"
-        
-        # Debug bilgileri göster - RESPONSE OLUŞTURDUKTAN SONRA
-        with st.expander("🔍 RAG İşlemi Detayları", expanded=False):
-            st.write("**⚙️ Kullanılan Ayarlar:**")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("🔍 Top-K", rag_settings.get('top_k', 5))
-                st.metric("📊 Benzerlik Eşiği", f"{similarity_threshold:.2f}")
-            with col2:
-                st.metric("✅ Filtrelenmiş Sonuç", len(filtered_results))
-                st.metric("📄 Context Uzunluğu", len(combined_context))
-            with col3:
-                st.metric("📊 Ortalama Benzerlik", f"{np.mean(similarity_scores):.3f}")
-                st.metric("📊 En Yüksek Benzerlik", f"{max(similarity_scores):.3f}")
-            
-            st.write("**🔎 Bulunan Sonuçlar:**")
-            for i, result in enumerate(filtered_results):
-                similarity_percent = result.similarity_score * 100
-                st.write(f"""
-                **Sonuç {i+1}:** `{result.source_file}` (Sayfa {result.page_number})
-                - 🏷️ Tip: {result.content_type} | 📊 Benzerlik: {similarity_percent:.1f}%
-                """)
-                
-                # İçerik önizlemesi
-                preview = result.chunk.content[:150] + "..." if len(result.chunk.content) > 150 else result.chunk.content
-                st.code(preview)
-            
-            # Context önizlemesi - nested expander kaldırıldı
-            st.write("**📋 Oluşturulan Context:**")
-            if st.checkbox("Context göster", key="show_context"):
-                st.text_area("Context", combined_context, height=200, key="context_area")
-            
-            # Debug bilgileri
-            if st.checkbox("🔧 Debug Bilgileri", key="show_debug"):
-                st.write("**🤖 Model Durumu:**")
-                if 'debug_model_info' in st.session_state:
-                    model_info = st.session_state.debug_model_info
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"• Model Adı: {model_info.get('model_name', 'N/A')}")
-                        st.write(f"• Model Yüklü: {model_info.get('model_loaded', False)}")
-                    with col2:
-                        st.write(f"• Servis Türü: {model_info.get('service_type', 'N/A')}")
-                        st.write(f"• Device: {model_info.get('device', 'N/A')}")
-                
-                st.write("**📤 Response Detayları:**")
-                if 'debug_result_type' in st.session_state:
-                    st.write(f"• Result Türü: {st.session_state.debug_result_type}")
-                    st.code(st.session_state.debug_result_content)
+        if filtered_results:
+            source_files = list({result.source_file for result in filtered_results[:3]})  # İlk 3 kaynak
+            response += f"\n\n**📚 Kaynaklar:** {', '.join(source_files)}"
         
         return response
         
@@ -849,11 +769,11 @@ with st.sidebar:
             # Chunk Size
             chunk_size = st.slider(
                 "📏 Chunk Boyutu (karakter)",
-                min_value=300,
+                min_value=50,
                 max_value=1500,
                 value=800,
                 step=50,
-                help="Metin parçalarının boyutu. Küçük: daha detaylı, Büyük: daha genel"
+                help="Metin parçalarının boyutu. Küçük: daha detaylı/sayısal veriler, Büyük: daha genel context. Min 50: kısa sayısal veriler için"
             )
             
             # Overlap Size
