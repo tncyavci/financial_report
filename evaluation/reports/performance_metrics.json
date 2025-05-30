@@ -1,0 +1,47 @@
+{
+  "system_info": {
+    "torch_available": true,
+    "gpu_available": false,
+    "last_updated": "2025-05-30T17:40:47.713975"
+  },
+  "metrics": [
+    {
+      "timestamp": "2025-05-30T17:40:47.713914",
+      "operation": "global_test",
+      "duration": 0.5052099227905273,
+      "memory_usage": {
+        "start_mb": 70.6,
+        "end_mb": 70.6,
+        "delta_mb": 0.0,
+        "peak_mb": 70.6
+      },
+      "gpu_info": null,
+      "metadata": {}
+    }
+  ],
+  "summary": {
+    "total_operations": 1,
+    "time_range": {
+      "start": "2025-05-30T17:40:47.713914",
+      "end": "2025-05-30T17:40:47.713914"
+    },
+    "duration_stats": {
+      "min": 0.5052099227905273,
+      "max": 0.5052099227905273,
+      "avg": 0.5052099227905273,
+      "total": 0.5052099227905273
+    },
+    "memory_stats": {
+      "min_delta_mb": 0.0,
+      "max_delta_mb": 0.0,
+      "avg_delta_mb": 0.0
+    },
+    "operations_by_type": {
+      "global_test": {
+        "count": 1,
+        "total_duration": 0.5052099227905273,
+        "avg_duration": 0.5052099227905273
+      }
+    }
+  }
+}
