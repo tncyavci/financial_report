@@ -120,91 +120,131 @@ if 'system_initialized' not in st.session_state:
 def initialize_system():
     """Sistemi başlat"""
     try:
-        with st.spinner("🚀 Sistem başlatılıyor..."):
-            # Import statements
-            from src.text_processor import EmbeddingService
-            from src.vector_store import VectorStore, RetrievalService
-            from src.llm_service_local import GGUFModelService
+        # Progress tracking için
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        progress_bar.progress(0.1)
+        status_text.text("🔧 Kütüphaneler import ediliyor...")
+        
+        # Import statements
+        from src.text_processor import EmbeddingService
+        from src.vector_store import VectorStore, RetrievalService
+        from src.llm_service_local import GGUFModelService
+        
+        progress_bar.progress(0.2)
+        status_text.text("⚙️ Default RAG ayarları yükleniyor...")
+        
+        # Default RAG ayarlarını başlat
+        if 'rag_settings' not in st.session_state:
+            st.session_state.rag_settings = {
+                'chunk_size': 800,
+                'overlap_size': 150,
+                'top_k': 5,
+                'similarity_threshold': 0.3,
+                'max_context_length': 3000,
+                'search_strategy': 'hybrid',
+                'embedding_model': "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            }
+            logger.info("✅ Default RAG ayarları yüklendi")
+        
+        progress_bar.progress(0.3)
+        embedding_model_name = st.session_state.rag_settings.get('embedding_model', '').split('/')[-1]
+        status_text.text(f"🧠 Embedding modeli yükleniyor: {embedding_model_name}")
+        
+        # Embedding servisini başlat
+        if 'embedding_service' not in st.session_state:
+            embedding_model = st.session_state.rag_settings.get(
+                'embedding_model', 
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            )
+            st.session_state.embedding_service = EmbeddingService(embedding_model)
+            logger.info(f"✅ Embedding service başlatıldı: {embedding_model}")
+        
+        progress_bar.progress(0.5)
+        status_text.text("🗃️ Vector store başlatılıyor...")
+        
+        # Vector store başlat
+        if st.session_state.vector_store is None:
+            st.session_state.vector_store = VectorStore(persist_directory="./chroma_db")
+            logger.info("✅ Vector store başlatıldı")
+        
+        progress_bar.progress(0.7)
+        status_text.text("🔍 Retrieval service başlatılıyor...")
+        
+        # Retrieval service başlat
+        if st.session_state.retrieval_service is None:
+            st.session_state.retrieval_service = RetrievalService(
+                st.session_state.vector_store, 
+                st.session_state.embedding_service
+            )
+            logger.info("✅ Retrieval service başlatıldı")
+        
+        progress_bar.progress(0.85)
+        status_text.text("🤖 LLM modeli kontrol ediliyor...")
+        
+        # LLM service başlat
+        if st.session_state.llm_service is None:
+            model_path = "/content/drive/MyDrive/Colab Notebooks/kredi_rag_sistemi/backup/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
             
-            # Default RAG ayarlarını başlat
-            if 'rag_settings' not in st.session_state:
-                st.session_state.rag_settings = {
-                    'chunk_size': 800,
-                    'overlap_size': 150,
-                    'top_k': 5,
-                    'similarity_threshold': 0.3,
-                    'max_context_length': 3000,
-                    'search_strategy': 'hybrid',
-                    'embedding_model': "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-                }
-                logger.info("✅ Default RAG ayarları yüklendi")
+            # Colab ortamı kontrol
+            if os.path.exists(model_path):
+                model_name = os.path.basename(model_path)
+                status_text.text(f"🤖 GGUF modeli yükleniyor: {model_name}")
+                st.session_state.llm_service = GGUFModelService(model_path=model_path)
+                logger.info("✅ GGUF LLM service başlatıldı")
+                llm_model_info = f"GGUF: {model_name}"
+            else:
+                status_text.text("🤖 HuggingFace modeli yükleniyor...")
+                st.warning("⚠️ Model dosyası bulunamadı. HuggingFace modeli kullanılacak.")
+                from src.llm_service_local import HuggingFaceModelService
+                st.session_state.llm_service = HuggingFaceModelService()
+                logger.info("✅ HuggingFace LLM service başlatıldı")
+                llm_model_info = "HuggingFace: Default Model"
+        
+        progress_bar.progress(1.0)
+        status_text.text("✅ Sistem başarıyla başlatıldı!")
+        
+        st.session_state.system_initialized = True
+        
+        # Progress'i temizle
+        time.sleep(1)
+        progress_bar.empty()
+        status_text.empty()
+        
+        # İlk sistem bilgilerini göster
+        if 'system_info_shown' not in st.session_state:
+            st.session_state.system_info_shown = True
             
-            # Embedding servisini başlat
-            if 'embedding_service' not in st.session_state:
-                embedding_model = st.session_state.rag_settings.get(
-                    'embedding_model', 
-                    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-                )
-                st.session_state.embedding_service = EmbeddingService(embedding_model)
-                logger.info(f"✅ Embedding service başlatıldı: {embedding_model}")
-            
-            # Vector store başlat
-            if st.session_state.vector_store is None:
-                st.session_state.vector_store = VectorStore(persist_directory="./chroma_db")
-                logger.info("✅ Vector store başlatıldı")
-            
-            # Retrieval service başlat
-            if st.session_state.retrieval_service is None:
-                st.session_state.retrieval_service = RetrievalService(
-                    st.session_state.vector_store, 
-                    st.session_state.embedding_service
-                )
-                logger.info("✅ Retrieval service başlatıldı")
-            
-            # LLM service başlat
-            if st.session_state.llm_service is None:
-                model_path = "/content/drive/MyDrive/Colab Notebooks/kredi_rag_sistemi/backup/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+            with st.expander("🎯 Sistem Başlatma Bilgileri", expanded=True):
+                col1, col2 = st.columns(2)
                 
-                # Colab ortamı kontrol
-                if os.path.exists(model_path):
-                    st.session_state.llm_service = GGUFModelService(model_path=model_path)
-                    logger.info("✅ GGUF LLM service başlatıldı")
-                else:
-                    st.warning("⚠️ Model dosyası bulunamadı. HuggingFace modeli kullanılacak.")
-                    from src.llm_service_local import HuggingFaceModelService
-                    st.session_state.llm_service = HuggingFaceModelService()
-                    logger.info("✅ HuggingFace LLM service başlatıldı")
-            
-            st.session_state.system_initialized = True
-            
-            # İlk sistem bilgilerini göster
-            if 'system_info_shown' not in st.session_state:
-                st.session_state.system_info_shown = True
+                with col1:
+                    st.write("**⚙️ Mevcut RAG Ayarları:**")
+                    settings = st.session_state.rag_settings
+                    st.write(f"• 📏 Chunk Boyutu: {settings['chunk_size']} karakter")
+                    st.write(f"• 🔗 Overlap: {settings['overlap_size']} karakter")
+                    st.write(f"• 🔍 Top-K: {settings['top_k']} sonuç")
+                    st.write(f"• 📊 Benzerlik Eşiği: {settings['similarity_threshold']}")
                 
-                with st.expander("🎯 Sistem Başlatma Bilgileri", expanded=True):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("**⚙️ Mevcut RAG Ayarları:**")
-                        settings = st.session_state.rag_settings
-                        st.write(f"• 📏 Chunk Boyutu: {settings['chunk_size']} karakter")
-                        st.write(f"• 🔗 Overlap: {settings['overlap_size']} karakter")
-                        st.write(f"• 🔍 Top-K: {settings['top_k']} sonuç")
-                        st.write(f"• 📊 Benzerlik Eşiği: {settings['similarity_threshold']}")
-                    
-                    with col2:
-                        st.write("**🧠 Model Bilgileri:**")
-                        if hasattr(st.session_state.embedding_service, 'get_model_info'):
-                            model_info = st.session_state.embedding_service.get_model_info()
-                            st.write(f"• Model: {model_info.get('model_name', 'N/A').split('/')[-1]}")
-                            st.write(f"• Boyut: {model_info.get('embedding_dim', 'N/A')} dim")
-                            st.write(f"• Max Length: {model_info.get('max_seq_length', 'N/A')}")
-                
-                st.info("💡 **İpucu:** Sidebar'daki 'Gelişmiş Ayarlar' bölümünden RAG parametrelerini özelleştirebilirsiniz!")
+                with col2:
+                    st.write("**🧠 Model Bilgileri:**")
+                    if hasattr(st.session_state.embedding_service, 'get_model_info'):
+                        model_info = st.session_state.embedding_service.get_model_info()
+                        st.write(f"• 🧠 Embedding: {model_info.get('model_name', 'N/A').split('/')[-1]}")
+                        st.write(f"• 📐 Boyut: {model_info.get('embedding_dim', 'N/A')} dim")
+                        st.write(f"• 📏 Max Length: {model_info.get('max_seq_length', 'N/A')}")
+                        st.write(f"• 🤖 LLM: {llm_model_info}")
             
-            return True
-            
+            # Performance estimate
+            st.info("💡 **Performance Tahmini (A100):** 20 sayfalık PDF → 6-14 saniye | 100 chunk → 3-8 saniye embedding")
+            st.success("💡 **İpucu:** Sidebar'daki 'Performance Optimizasyonları' bölümünden hızı artırabilirsiniz!")
+        
+        return True
+        
     except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
         st.error(f"❌ Sistem başlatma hatası: {e}")
         logger.error(f"System initialization error: {e}")
         return False
@@ -281,7 +321,9 @@ def process_uploaded_files(uploaded_files):
             # Progress update
             progress = (file_idx) / (total_files * 2)  # 2 phase olduğu için
             progress_bar.progress(progress)
-            status_text.text(f"📄 Processing {file_idx + 1}/{total_files}: {uploaded_file.name}")
+            
+            file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+            status_text.text(f"📄 Processing {file_idx + 1}/{total_files}: {uploaded_file.name} ({file_size_mb:.1f} MB)")
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
@@ -292,9 +334,23 @@ def process_uploaded_files(uploaded_files):
                 
                 # File type processing
                 if uploaded_file.name.lower().endswith('.pdf'):
+                    status_text.text(f"📖 PDF okunuyor: {uploaded_file.name}")
                     pdf_result = pdf_processor.process_pdf(tmp_path)
                     
-                    for page_data in pdf_result.pages:
+                    total_pages = len(pdf_result.pages)
+                    page_progress = st.progress(0)
+                    page_status = st.empty()
+                    
+                    # Estimate processing time for user
+                    estimated_time = total_pages * 0.5  # ~0.5 seconds per page
+                    page_status.text(f"📄 {total_pages} sayfa tespit edildi. Tahmini süre: {estimated_time:.0f} saniye")
+                    time.sleep(0.5)
+                    
+                    for page_idx, page_data in enumerate(pdf_result.pages):
+                        # Page-by-page progress
+                        page_progress.progress((page_idx + 1) / total_pages)
+                        page_status.text(f"📄 Sayfa {page_idx + 1}/{total_pages} işleniyor...")
+                        
                         # Text chunks
                         if page_data.text and page_data.text.strip():
                             chunks = text_processor.create_chunks(
@@ -321,8 +377,19 @@ def process_uploaded_files(uploaded_files):
                                         }
                                     )
                                     file_chunks.extend(chunks)
+                        
+                        # Small delay for UI responsiveness
+                        if page_idx % 5 == 0:  # Every 5 pages
+                            time.sleep(0.1)
+                    
+                    # Clear page progress
+                    page_progress.empty()
+                    page_status.empty()
+                    
+                    status_text.text(f"✅ PDF tamamlandı: {len(file_chunks)} chunk oluşturuldu")
                 
                 elif uploaded_file.name.lower().endswith(('.xlsx', '.xls', '.xlsm')):
+                    status_text.text(f"📊 Excel okunuyor: {uploaded_file.name}")
                     excel_result = excel_processor.process_excel(tmp_path)
                     
                     for sheet_data in excel_result.sheets:
@@ -339,6 +406,8 @@ def process_uploaded_files(uploaded_files):
                                 }
                             )
                             file_chunks.extend(chunks)
+                    
+                    status_text.text(f"✅ Excel tamamlandı: {len(file_chunks)} chunk oluşturuldu")
                 
                 # Add to global chunks (without embeddings yet)
                 all_chunks.extend(file_chunks)
@@ -695,6 +764,27 @@ with st.sidebar:
                 st.error("❌ Sistem başlatılamadı!")
     else:
         st.success("✅ Sistem Aktif")
+        
+        # Current model info display
+        try:
+            model_info = "Model bilgisi alınamadı"
+            if hasattr(st.session_state, 'llm_service') and st.session_state.llm_service:
+                # Try to get LLM model info
+                model_path = "/content/drive/MyDrive/Colab Notebooks/kredi_rag_sistemi/backup/models/mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+                if os.path.exists(model_path):
+                    model_name = os.path.basename(model_path).replace('.gguf', '')
+                    model_info = f"🤖 {model_name}"
+                else:
+                    model_info = "🤖 HuggingFace Model"
+            
+            # Embedding model info
+            if 'rag_settings' in st.session_state:
+                embedding_name = st.session_state.rag_settings.get('embedding_model', '').split('/')[-1]
+                model_info += f" | 🧠 {embedding_name}"
+            
+            st.caption(model_info)
+        except:
+            pass
     
     # Advanced Settings
     if st.session_state.system_initialized:
@@ -1046,9 +1136,79 @@ with st.sidebar:
 # Ana içerik
 if not st.session_state.system_initialized:
     st.info("👈 Lütfen önce sistemi başlatın")
+    
+    # Performance bilgileri göster (sistem başlatılmadan önce)
+    st.markdown('<div class="subheader">⚡ Performance Bilgileri</div>', unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        **📄 PDF İşleme Hızı:**
+        - 10 sayfa: ~3-7 saniye
+        - 20 sayfa: ~6-14 saniye  
+        - 50 sayfa: ~15-35 saniye
+        - 100 sayfa: ~30-70 saniye
+        """)
+    
+    with col2:
+        st.markdown("""
+        **🧠 Embedding Hızı (A100):**
+        - 50 chunk: ~2-5 saniye
+        - 100 chunk: ~3-8 saniye
+        - 200 chunk: ~5-15 saniye
+        - 500 chunk: ~10-30 saniye
+        """)
+    
+    with col3:
+        st.markdown("""
+        **🚀 Optimizasyon İpuçları:**
+        - A100 Max Speed preset kullanın
+        - Embedding model reuse aktif
+        - Batch size 256+ (otomatik)
+        - 4+ worker paralel işlem
+        """)
+    
+    st.info("💡 **20 Sayfalık PDF Örneği:** ~80-150 chunk → Toplam 6-14 saniye")
 else:
     # Chat arayüzü
     st.markdown('<div class="subheader">💬 Chat Arayüzü</div>', unsafe_allow_html=True)
+    
+    # Performance monitoring panel (when system is running)
+    if 'processing_history' in st.session_state and st.session_state.processing_history:
+        with st.expander("📊 Real-time Performance Monitor", expanded=False):
+            latest = st.session_state.processing_history[-1]
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("🚀 Son İşlem Hızı", f"{latest['speed']:.1f} chunks/s")
+            with col2:
+                st.metric("⏱️ Son İşlem Süresi", f"{latest['total_time']:.1f}s")
+            with col3:
+                st.metric("📦 Son Chunk Sayısı", latest['chunks'])
+            with col4:
+                efficiency = "🔥 Çok Hızlı" if latest['speed'] > 10 else "⚡ Hızlı" if latest['speed'] > 5 else "📊 Normal"
+                st.metric("📈 Verimlilik", efficiency)
+            
+            # Performance trend
+            if len(st.session_state.processing_history) > 1:
+                speeds = [entry['speed'] for entry in st.session_state.processing_history[-5:]]
+                avg_speed = np.mean(speeds)
+                trend = "📈 Artan" if speeds[-1] > avg_speed else "📉 Azalan" if speeds[-1] < avg_speed * 0.8 else "➡️ Sabit"
+                st.write(f"**Trend:** {trend} | **Ortalama Hız:** {avg_speed:.1f} chunks/s")
+            
+            # Predictions for common document sizes
+            current_speed = latest['speed']
+            st.write("**📄 Tahmini İşleme Süreleri (mevcut hıza göre):**")
+            predictions = {
+                "10 sayfa (~50 chunk)": 50 / current_speed,
+                "20 sayfa (~100 chunk)": 100 / current_speed,
+                "50 sayfa (~250 chunk)": 250 / current_speed,
+                "100 sayfa (~500 chunk)": 500 / current_speed
+            }
+            
+            for doc_type, time_estimate in predictions.items():
+                st.write(f"• {doc_type}: ~{time_estimate:.1f} saniye")
     
     # Chat geçmişini göster
     chat_container = st.container()
