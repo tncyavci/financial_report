@@ -262,3 +262,207 @@ Herhangi bir sorunuz için issue açabilirsiniz.
 ---
 
 **Not**: Bu proje Colab Pro Plus A100 GPU + NGROK için optimize edilmiştir. ChromaDB kullanarak modern vector database desteği sağlar. Public URL ile herhangi bir yerden erişilebilir. 
+
+## ⚙️ **Advanced RAG Settings**
+
+The system now includes comprehensive configurable parameters for optimal RAG performance:
+
+### 📏 **Chunk Configuration**
+- **Chunk Size**: 300-1500 characters (default: 800)
+- **Overlap Size**: 50-300 characters (default: 150)
+- Real-time adjustment in Streamlit interface
+
+### 🔍 **Retrieval Parameters**
+- **Top-K Results**: 1-15 results (default: 5)
+- **Similarity Threshold**: 0.0-1.0 (default: 0.3)
+- **Max Context Length**: 1000-5000 characters (default: 3000)
+- **Search Strategy**: hybrid, semantic_only, keyword_boost
+
+### 🧠 **Embedding Models**
+Choose from multiple embedding models:
+- `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (default, Turkish optimized)
+- `sentence-transformers/all-MiniLM-L6-v2` (lightweight)
+- `sentence-transformers/all-mpnet-base-v2` (high quality)
+
+### 📊 **Performance Monitoring**
+- Query response time tracking
+- Similarity score analysis
+- Context length optimization
+- Chunk statistics with detailed metrics
+
+## 🎯 **Features**
+
+### Core RAG System
+- **ChromaDB Vector Database**: Fast similarity search with cosine similarity
+- **Mistral 7B GGUF Model**: A100 GPU optimized local inference
+- **Multilingual Embeddings**: Turkish financial text optimization
+- **Advanced Chunking**: Configurable size and overlap strategies
+
+### Document Processing
+- **PDF Processing**: Text + table extraction with multiprocessing
+- **Excel Processing**: Multi-sheet analysis with metadata preservation
+- **Smart Chunking**: Context-aware text segmentation
+- **Metadata Tracking**: Source files, page numbers, content types
+
+### User Interface
+- **Modern Streamlit Interface**: Professional design with gradients
+- **Advanced Settings Panel**: Real-time parameter adjustment
+- **Performance Dashboard**: Query metrics and similarity tracking
+- **RAG Process Transparency**: Detailed retrieval and context building insights
+
+## 🔧 **Configuration Options**
+
+### Basic Setup
+```python
+# Default settings
+RAG_SETTINGS = {
+    'chunk_size': 800,
+    'overlap_size': 150,
+    'top_k': 5,
+    'similarity_threshold': 0.3,
+    'max_context_length': 3000,
+    'search_strategy': 'hybrid',
+    'embedding_model': "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+}
+```
+
+### Advanced Tuning
+
+#### For Financial Reports (Large Context)
+```python
+settings = {
+    'chunk_size': 1200,      # Larger chunks for financial contexts
+    'overlap_size': 200,     # Higher overlap for continuity
+    'top_k': 8,             # More results for comprehensive analysis
+    'similarity_threshold': 0.25,  # Lower threshold for broader matches
+    'max_context_length': 4000     # Larger context for detailed analysis
+}
+```
+
+#### For Quick Q&A (Performance Optimized)
+```python
+settings = {
+    'chunk_size': 600,       # Smaller chunks for faster processing
+    'overlap_size': 100,     # Minimal overlap
+    'top_k': 3,             # Fewer results for speed
+    'similarity_threshold': 0.4,   # Higher threshold for precision
+    'max_context_length': 2000     # Compact context
+}
+```
+
+## 📈 **Performance Metrics**
+
+The system tracks and displays:
+- **Query Response Time**: End-to-end latency
+- **Similarity Scores**: Average and peak similarity metrics
+- **Context Quality**: Length and relevance analysis
+- **Chunk Statistics**: Size distribution and processing efficiency
+- **Memory Usage**: A100 GPU utilization monitoring
+
+## 🛠️ **Manual Setup**
+
+### Prerequisites
+```bash
+# Python 3.8+ recommended
+pip install -r requirements.txt
+```
+
+### Local Installation
+```bash
+git clone <repository>
+cd financial_report
+
+# Install dependencies
+pip install streamlit chromadb sentence-transformers
+pip install PyPDF2 openpyxl pandas numpy
+pip install llama-cpp-python pyngrok
+
+# Start application
+streamlit run streamlit_app.py
+```
+
+### NGROK Setup
+1. Get your token from [ngrok.com](https://ngrok.com)
+2. Add to `colab_setup.py` or set as environment variable:
+```python
+NGROK_TOKEN = "your_token_here"
+```
+
+## 📊 **System Architecture**
+
+```
+Documents (PDF/Excel) → Text Processing → Chunking → Embeddings → ChromaDB
+                                                                      ↓
+User Query → Embedding → Similarity Search → Context Building → Mistral 7B → Response
+```
+
+### Processing Pipeline
+1. **Document Ingestion**: PDF/Excel parsing with table extraction
+2. **Smart Chunking**: Configurable size with overlap for context preservation
+3. **Embedding Generation**: Turkish-optimized multilingual embeddings
+4. **Vector Storage**: ChromaDB with metadata indexing
+5. **Retrieval**: Similarity search with configurable parameters
+6. **Context Building**: Intelligent context assembly with length limits
+7. **Generation**: Mistral 7B inference with A100 optimization
+
+## 🎯 **Use Cases**
+
+### Financial Analysis
+- **Annual Reports**: Comprehensive financial statement analysis
+- **Investment Research**: Due diligence and risk assessment
+- **Regulatory Documents**: Compliance and regulatory analysis
+- **Market Research**: Turkish market insights and trends
+
+### Configurable for Different Scenarios
+- **Executive Summaries**: High-level overview (large chunks, broad similarity)
+- **Detail Extraction**: Specific data points (small chunks, high precision)
+- **Comparative Analysis**: Cross-document insights (high top-k, moderate threshold)
+
+## 🔧 **Troubleshooting**
+
+### NGROK Session Conflicts
+```python
+# If you see "limited to 1 simultaneous ngrok agent sessions"
+pyngrok.ngrok.disconnect_all()
+pyngrok.ngrok.kill()
+```
+
+### Performance Optimization
+- **A100 GPU**: Optimal chunk_size: 800-1200
+- **T4 GPU**: Recommended chunk_size: 400-800  
+- **CPU Only**: Use smaller chunks: 300-600
+
+### Memory Management
+- Monitor context length for large documents
+- Adjust top_k based on available memory
+- Use similarity threshold to filter irrelevant results
+
+## 🚀 **Advanced Features**
+
+### Real-time Parameter Adjustment
+- Modify RAG settings without restarting
+- A/B test different configurations
+- Performance impact visualization
+
+### Detailed Analytics
+- Query performance profiling
+- Similarity score distribution analysis
+- Context quality metrics
+- Processing time breakdown
+
+### Enterprise Features
+- Batch document processing
+- Custom embedding model support
+- Advanced search strategies
+- Comprehensive logging and monitoring
+
+## 📞 **Support**
+
+For technical issues or feature requests, please check:
+1. System requirements (A100 GPU recommended)
+2. NGROK token configuration
+3. Model file paths
+4. Parameter tuning guidelines
+
+---
+**Built for Turkish Financial Market Analysis | A100 GPU Optimized | ChromaDB + Mistral 7B** 
