@@ -309,17 +309,18 @@ def process_uploaded_files(uploaded_files):
             text_processor = st.session_state[text_processor_key]
             status_text.text("♻️ Mevcut embedding modeli kullanılıyor...")
         else:
-            status_text.text("🧠 Embedding modeli yükleniyor...")
+            status_text.text("🧠 TextProcessor başlatılıyor...")
+            # Mevcut embedding_service'i kullan, yeni yaratma!
             text_processor = TextProcessor(
                 chunk_size=rag_settings.get('chunk_size', 800),
                 overlap_size=rag_settings.get('overlap_size', 150),
-                embedding_model=rag_settings.get('embedding_model', "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+                embedding_service=st.session_state.embedding_service  # Mevcut service'i geç!
             )
             
             if perf_settings['reuse_embeddings']:
                 st.session_state[text_processor_key] = text_processor
             
-            status_text.text("✅ Embedding modeli hazır!")
+            status_text.text("✅ TextProcessor hazır!")
             time.sleep(0.5)
         
         all_chunks = []
@@ -628,7 +629,8 @@ def generate_response(query: str) -> str:
         # Context retrieve et
         retrieval_result = st.session_state.retrieval_service.retrieve_context(
             query, 
-            n_results=rag_settings.get('top_k', 5)
+            n_results=rag_settings.get('top_k', 5),
+            max_context_length=rag_settings.get('max_context_length', 3000)
         )
         
         if not retrieval_result.results:

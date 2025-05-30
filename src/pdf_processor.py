@@ -115,21 +115,21 @@ class PDFProcessor:
     
     def _process_pages_parallel(self, pdf_path: str, total_pages: int) -> List[PageData]:
         """Sayfaları paralel olarak işle"""
-        pages = []
         
-        # Küçük ve orta PDF'ler için sıralı işleme (daha hızlı)
-        if total_pages <= 10:  # 10 sayfaya kadar sıralı işleme
-            logger.info(f"📄 {total_pages} sayfa - optimize edilmiş sıralı işleme")
+        # Sequential processing için koşullar
+        use_sequential = (
+            total_pages <= 10 or  # Küçük dosyalar
+            os.name == 'Darwin'   # macOS (multiprocessing sorunları)
+        )
+        
+        if use_sequential:
+            reason = "küçük dosya" if total_pages <= 10 else "macOS uyumluluğu"
+            logger.info(f"📄 {total_pages} sayfa - sıralı işleme ({reason})")
             return self._process_pages_sequential_optimized(pdf_path, total_pages)
         
-        # Büyük PDF'ler için paralel işleme
+        # Büyük PDF'ler için paralel işleme (Linux/Windows)
         logger.info(f"🚀 Paralel işleme başlatılıyor - {self.max_workers} worker")
-        
-        # Mac için multiprocessing problemlerini azalt
-        import platform
-        if platform.system() == 'Darwin':  # macOS
-            logger.info("🍎 macOS tespit edildi - sıralı işleme kullanılıyor")
-            return self._process_pages_sequential_optimized(pdf_path, total_pages)
+        pages = []
         
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             # Tüm sayfalar için task'ları başlat

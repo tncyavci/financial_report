@@ -112,20 +112,32 @@ class TextProcessor:
     def __init__(self, 
                  chunk_size: int = 800,
                  overlap_size: int = 150,
-                 embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"):
+                 embedding_model: str = None,
+                 embedding_service: EmbeddingService = None):
         """
         Args:
             chunk_size: Chunk boyutu (karakter)
             overlap_size: Chunk'lar arası örtüşme
-            embedding_model: Embedding model adı
+            embedding_model: Embedding model adı (eğer yeni service yaratılacaksa)
+            embedding_service: Mevcut embedding service (performance için)
         """
         self.chunk_size = chunk_size
         self.overlap_size = overlap_size
         
-        # Embedding servisini başlat
-        self.embedding_service = EmbeddingService(embedding_model)
+        # Embedding servisini başlat - mevcut service öncelikli
+        if embedding_service is not None:
+            self.embedding_service = embedding_service
+            logger.info(f"📝 TextProcessor başlatıldı - mevcut embedding service kullanılıyor")
+        elif embedding_model is not None:
+            self.embedding_service = EmbeddingService(embedding_model)
+            logger.info(f"📝 TextProcessor başlatıldı - yeni embedding service: {embedding_model}")
+        else:
+            # Default model
+            default_model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            self.embedding_service = EmbeddingService(default_model)
+            logger.info(f"📝 TextProcessor başlatıldı - default embedding service: {default_model}")
         
-        logger.info(f"📝 TextProcessor başlatıldı - chunk_size: {chunk_size}, overlap: {overlap_size}")
+        logger.info(f"📏 Chunk ayarları - boyut: {chunk_size}, overlap: {overlap_size}")
     
     def process_document_pages(self, pages: List, source_file: str) -> List[TextChunk]:
         """

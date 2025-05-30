@@ -325,13 +325,14 @@ class RetrievalService:
         
         logger.info("🔍 ChromaDB RetrievalService başlatıldı")
     
-    def retrieve_context(self, query: str, n_results: int = 5) -> RetrievalResult:
+    def retrieve_context(self, query: str, n_results: int = 5, max_context_length: int = 3000) -> RetrievalResult:
         """
         Query için context retrieve et
         
         Args:
             query: Kullanıcı sorgusu
             n_results: Kaç sonuç alınacağı
+            max_context_length: Maksimum context uzunluğu
             
         Returns:
             RetrievalResult: Retrieval sonucu
@@ -345,8 +346,8 @@ class RetrievalService:
             # ChromaDB search
             search_results = self.vector_store.search(query_embedding, n_results)
             
-            # Context'i birleştir
-            combined_context = self._combine_context(search_results)
+            # Context'i birleştir - max_context_length kullan
+            combined_context = self._combine_context(search_results, max_context_length)
             
             result = RetrievalResult(
                 results=search_results,
@@ -415,7 +416,7 @@ class RetrievalService:
                 total_results=0
             )
     
-    def _combine_context(self, search_results: List[SearchResult]) -> str:
+    def _combine_context(self, search_results: List[SearchResult], max_context_length: int = 3000) -> str:
         """Search sonuçlarını birleştirip context oluştur"""
         if not search_results:
             return ""
@@ -442,7 +443,6 @@ class RetrievalService:
         combined = "\n\n".join(context_parts)
         
         # Context boyutu kontrolü (çok uzunsa kısalt)
-        max_context_length = 3000  # 3000 karakter limiti
         if len(combined) > max_context_length:
             combined = combined[:max_context_length] + "\n\n[Context kısaltıldı...]"
         
