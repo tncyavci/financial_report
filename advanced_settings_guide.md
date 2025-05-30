@@ -7,7 +7,7 @@ Bu dokümantasyon sistemdeki tüm gelişmiş ayarların ne için kullanıldığ�
 ## 📊 **RAG Parametreleri**
 
 ### 🔧 **Chunk Size (Chunk Boyutu)**
-**Değer Aralığı:** 300-1500 karakter  
+**Değer Aralığı:** 50-1500 karakter  
 **Varsayılan:** 800 karakter
 
 #### 🎯 **Ne İçin Kullanılır:**
@@ -17,11 +17,24 @@ Bu dokümantasyon sistemdeki tüm gelişmiş ayarların ne için kullanıldığ�
 
 #### ⚙️ **Optimize Edilme Nedenleri:**
 
-**Küçük Chunk Size (300-600):**
+**Çok Küçük Chunk Size (50-200):**
+- ✅ **Avantajlar:**
+  - Sayısal veriler ve KPI'lar için ideal
+  - Tablolardaki tek satır bilgiler
+  - Finansal metrikler (EBITDA, ROE vb.)
+  - Başlık ve önemli kısa bilgiler
+  - Ultra hızlı embedding
+- ❌ **Dezavantajlar:**
+  - Context tamamen kaybolur
+  - Çok fazla chunk oluşur
+  - Bilgi parçalanması riski yüksek
+
+**Küçük Chunk Size (200-600):**
 - ✅ **Avantajlar:**
   - Daha detaylı ve spesifik bilgi
   - Hızlı embedding oluşturma
   - Düşük memory kullanımı
+  - Tablo satırları ve kısa paragraflar
 - ❌ **Dezavantajlar:**
   - Context kaybı riski
   - Parçalanmış bilgi
@@ -39,6 +52,12 @@ Bu dokümantasyon sistemdeki tüm gelişmiş ayarların ne için kullanıldığ�
 
 #### 🎯 **Kullanım Senaryoları:**
 ```python
+# Sayısal veriler ve KPI'lar için
+chunk_size = 100  # Kısa finansal metrikler
+
+# Tablo satırları için
+chunk_size = 200  # Tek satır bilgiler
+
 # Hızlı soru-cevap için
 chunk_size = 600  # Spesifik bilgiler
 
@@ -47,6 +66,18 @@ chunk_size = 1200  # Geniş context
 
 # Genel kullanım için
 chunk_size = 800   # Optimal denge
+```
+
+#### 📊 **Finansal Veri Türleri ve Optimal Chunk Sizes:**
+```python
+financial_data_chunks = {
+    50-100:   "KPI'lar, oranlar, tek metrikler",
+    100-200:  "Tablo satırları, kısa tanımlar", 
+    200-400:  "Paragraf başına analiz",
+    400-800:  "Bölüm bazlı bilgiler",
+    800-1200: "Sayfa bazlı kapsamlı analiz",
+    1200+:    "Multi-sayfa karşılaştırmalı analiz"
+}
 ```
 
 ---
